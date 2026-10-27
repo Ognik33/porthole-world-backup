@@ -142,4 +142,17 @@ c.close(); d.close(); g.close()
 one_shot("quit")
 proc.wait(timeout=5)
 check("quit exits", proc.returncode == 0)
+# сторожевой таймер: без команд с верным токеном агент завершается сам
+port2 = free_port()
+p2 = subprocess.Popen([exe, "--agent", str(port2), TOKEN, "2"], stdout=subprocess.PIPE, text=True, encoding="utf-8")
+p2.stdout.readline(); p2.stdout.readline()  # hello, ready
+for _ in range(3):  # ping каждую секунду держит агент живым дольше 2 с
+    time.sleep(1)
+    with socket.create_connection(("127.0.0.1", port2), timeout=2) as c2:
+        c2.sendall(cmd("ping"))
+check("ping keeps agent alive", p2.poll() is None)
+with socket.create_connection(("127.0.0.1", port2), timeout=2) as c2:
+    c2.sendall(cmd("ping", token="z" * 24))  # чужой токен таймер не продлевает
+rest = p2.communicate(timeout=6)[0]
+check("idle timeout exits", p2.returncode == 0 and "error\treason=idle_timeout" in rest)
 print(f"OK {ok} checks")

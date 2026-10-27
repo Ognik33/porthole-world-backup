@@ -4,7 +4,13 @@
 // argv содержит только наши аргументы. Вывод — строки UTF-8 в stdout, поля через TAB, "ключ=значение".
 //
 // Режимы:
-//   --agent <port> <token>   основной: один процесс на сессию, команды по TCP на 127.0.0.1:<port>
+//   --agent <port> <token> [idle_s]
+//                            основной: один процесс на сессию, команды по TCP на 127.0.0.1:<port>.
+//                            Если idle_s секунд (по умолчанию 60) не пришло ни одной команды с верным
+//                            токеном, агент завершается сам: Luau шлёт ping раз в 10 с, так что тишина
+//                            значит, что дополнение больше не работает, и хелпер не должен остаться
+//                            сиротой (в логе 0.0.3 после выхода из лобби дополнение не получило ни
+//                            одного события, и неизвестно, убил ли Porthole хелпер).
 //   --hello                  одна строка hello и выход (диагностика)
 //
 // Протокол агента (версия 1) описан в docs/protocol.md. Коротко:
@@ -29,6 +35,7 @@
 static mutex_t g_out_lock;
 static volatile int g_out_ok = 1; // 0, когда stdout закрыт: Porthole нас больше не слушает
 static volatile int g_quit = 0;
+static unsigned long long g_last_cmd = 0; // время последней команды с верным токеном (now_ms)
 
 void out_line(const char *s) {
     mutex_lock(&g_out_lock);
@@ -175,6 +182,7 @@ static int handle_command(char *line) {
         emit_error("bad_token", NULL);
         return 0;
     }
+    g_last_cmd = now_ms();
     const char *cmd = parts[1];
     if (!strcmp(cmd, "ping")) out_line("pong");
     else if (!strcmp(cmd, "quit")) g_quit = 1;
@@ -261,9 +269,10 @@ static void conn_read(conn_t *c) {
     }
 }
 
-static int mode_agent(const char *port_s, const char *token) {
+static int mode_agent(const char *port_s, const char *token, const char *idle_s) {
     int port = port_s ? atoi(port_s) : 0;
-    if (port < 1 || port > 65535 || !token || strlen(token) < 16 || strlen(token) > 64) {
+    int idle = idle_s ? atoi(idle_s) : 60;
+    if (port < 1 || port > 65535 || !token || strlen(token) < 16 || strlen(token) > 64 || idle < 1 || idle > 86400) {
         emit_error("bad_args", NULL);
         return 2;
     }
@@ -290,6 +299,7 @@ static int mode_agent(const char *port_s, const char *token) {
         return 3;
     }
     emit_hello();
+    g_last_cmd = now_ms();
     {
         char r[32];
         snprintf(r, sizeof r, "ready\tport=%d", port);
@@ -308,6 +318,10 @@ static int mode_agent(const char *port_s, const char *token) {
         }
         struct timeval tv = { 1, 0 };
         int r = select((int)maxfd + 1, &rd, NULL, NULL, &tv);
+        if (now_ms() - g_last_cmd >= (unsigned long long)idle * 1000ull) {
+            emit_error("idle_timeout", NULL);
+            break;
+        }
         if (r <= 0) continue; // таймаут: проверить g_quit / g_out_ok
         if (FD_ISSET(ls, &rd)) {
             for (;;) {
@@ -337,7 +351,8 @@ int porthole_native_main(int argc, char **argv) {
     int i = 0;
     if (argc > 0 && argv[0] && argv[0][0] != '-') i = 1; // на случай, если пришло имя программы
     if (i < argc && !strcmp(argv[i], "--agent"))
-        return mode_agent(i + 1 < argc ? argv[i + 1] : NULL, i + 2 < argc ? argv[i + 2] : NULL);
+        return mode_agent(i + 1 < argc ? argv[i + 1] : NULL, i + 2 < argc ? argv[i + 2] : NULL,
+                          i + 3 < argc ? argv[i + 3] : NULL);
     if (i < argc && !strcmp(argv[i], "--hello")) { emit_hello(); return 0; }
     emit_error("bad_args", NULL);
     return 2;

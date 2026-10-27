@@ -109,9 +109,20 @@ local function poll()
 	if t - mismatch_since >= POLL_GRACE then apply("poll", role) end
 end
 
+-- Диагностика сборок 0.0.x: раз в 30 с строка «alive». По ней видно, вызывает ли Porthole on_tick
+-- после выхода из лобби и что тогда возвращает role(). Перед 0.1.0 убрать.
+local HEARTBEAT = 30
+local heartbeat_at = os.clock() + HEARTBEAT
+
 P.on_tick(function()
 	poll()
 	agent:tick()
+	local t = os.clock()
+	if t >= heartbeat_at then
+		heartbeat_at = t + HEARTBEAT
+		log("alive role=" .. string.format("%q", tostring(current_role())) .. " agent=" .. agent.state
+			.. " channel=" .. tostring(agent.channel))
+	end
 end)
 do
 	local ok, err = pcall(P.on_role_change, function(role) apply("role_change", role) end)
