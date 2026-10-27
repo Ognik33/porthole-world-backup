@@ -4,8 +4,8 @@
 
 Automatic backups of Minecraft Java worlds you host through [Porthole](https://store.steampowered.com/app/4963920).
 
-> **Status: in development.** Version 0.0.1 is a test build. It starts the add-on's helper and
-> checks the connection to it. Worlds are not backed up yet.
+> **Status: in development.** Versions 0.0.x are test builds. They start the add-on's helper and
+> check the connection to it. Worlds are not backed up yet.
 
 ## Planned for 0.1.0
 

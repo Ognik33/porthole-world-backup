@@ -1,8 +1,8 @@
 -- agent: нативный хелпер world_backup и связь с ним.
 --
 -- Основа — agent.luau из game-status 0.2.3 и надзор из лабы (lab.luau). Нового здесь три вещи:
---   1. Канал команд. Сначала постоянное соединение porthole.tcp_open; если его нет, оно бросает
---      ошибку или по нему не пришёл pong, — откат на porthole.tcp_send (соединение на команду).
+--   1. Канал команд. Сначала постоянное соединение porthole.tcp_open (проверено в Porthole 3.0.2);
+--      если его нет, оно бросает ошибку или по нему не пришёл pong, — откат на porthole.tcp_send.
 --      Откат запоминается до перезапуска Porthole, чтобы не терять 5 с на каждом старте хелпера.
 --   2. Хелпер считается готовым только после первого pong: значит, команды реально доходят.
 --   3. Надзор внутри модуля: ping раз в ~10 с, нет pong за ~5 с — перезапуск с нарастающей паузой.
@@ -47,7 +47,6 @@ function agent.new(P, opts)
 	self.channel = nil       -- "tcp_open" | "tcp_send", пока есть хелпер
 	self.open_broken = false -- tcp_open не подошёл: до перезапуска Porthole сразу tcp_send
 	self.conn = nil          -- объект tcp_open
-	self.call_style = nil    -- как вызывать методы conn: "plain" (conn.send(x)) или "method" (conn:send(x))
 	self.helper = nil
 	self.port = nil
 	self.token = nil
@@ -80,26 +79,13 @@ end
 
 -- ---------- tcp_open ----------
 
--- Вызвать метод объекта tcp_open. Опись API знает только, что у объекта есть send и close;
--- как их вызывать (функция в таблице или метод), лаба не проверила. Пробуем оба способа:
--- неверный способ сразу даёт ошибку преобразования типа, без побочных эффектов.
+-- Вызвать функцию объекта tcp_open: conn.send(text), conn.close().
+-- Способ вызова проверен в Porthole 3.0.2 (0.0.1, лог: call=plain): это функции в таблице, не методы.
 function agent:_conn_call(name, ...)
 	local conn = self.conn
 	local okf, f = pcall(function() return conn[name] end)
-	if not okf or type(f) ~= "function" then return false, "no method " .. name end
-	if self.call_style == "plain" then return pcall(f, ...) end
-	if self.call_style == "method" then return pcall(f, conn, ...) end
-	local ok, err = pcall(f, ...)
-	if ok then
-		self.call_style = "plain"
-		return true
-	end
-	local ok2, err2 = pcall(f, conn, ...)
-	if ok2 then
-		self.call_style = "method"
-		return true
-	end
-	return false, util.first_line(err) .. " / " .. util.first_line(err2)
+	if not okf or type(f) ~= "function" then return false, "no function " .. name end
+	return pcall(f, ...)
 end
 
 function agent:_close_conn()
@@ -192,6 +178,7 @@ function agent:start()
 	self.helper = h
 	current = h
 	self.started_at = self.ticks
+	self:log("agent start port=" .. port)
 	self:_set("starting")
 end
 
@@ -222,6 +209,7 @@ function agent:_kill()
 end
 
 function agent:stop()
+	if self.helper then self:log("agent stop port=" .. tostring(self.port)) end
 	self.wanted = false
 	self.restart_in = 0
 	self:_kill()
@@ -274,8 +262,7 @@ function agent:_on_line(line)
 		self.ping_at, self.last_pong = nil, self.ticks
 		if self.state == "linking" then
 			self:log("agent ready version=" .. tostring(self.version) .. " port=" .. tostring(self.port)
-				.. " channel=" .. tostring(self.channel)
-				.. (self.channel == "tcp_open" and (" call=" .. tostring(self.call_style)) or ""))
+				.. " channel=" .. tostring(self.channel))
 			self:_set("ready")
 		end
 	elseif kind == "error" and f.reason == "bind" then

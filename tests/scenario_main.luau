@@ -19,7 +19,10 @@ check("token first", string.sub(H.open_sent[1], 1, #spec.args[3] + 1) == spec.ar
 check("still starting until pong", tab_has("Запускаю хелпер"))
 agent_say("pong")
 check("tab: ready with channel", tab_has("Хелпер работает · канал tcp_open"))
-check("log: ready + call style", log_has("agent ready version=0.0.1 port=41000 channel=tcp_open call=plain"))
+check("log: ready + channel", log_has("agent ready version=0.0.1 port=41000 channel=tcp_open"))
+check("log: start", log_has("agent start port=41000"))
+check("log: session at load", log_has('session event=load role="" type=string roster=0'))
+check("log: role change", log_has('session event=role_change role="host" type=string roster=1'))
 
 -- ping раз в ~10 с (20 тиков) по тому же соединению
 local n = #H.open_sent
@@ -51,6 +54,8 @@ bring_up(); agent_say("pong")
 local closed = H.open_closed
 set_role(""); H.end_cb()
 check("helper stopped at session end", helper().stopped)
+check("log: stop", log_has("agent stop port=41002"))
+check("log: session end", log_has("session event=session_end role=\"nil\""))
 check("conn closed at session end", H.open_closed == closed + 1)
 check("tab: wait again", tab_has("Хелпер запустится"))
 ticks(300); check("no restart outside session", #H.helpers == 3)

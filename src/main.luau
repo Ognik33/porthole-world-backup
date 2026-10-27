@@ -62,15 +62,31 @@ agent = agentmod.new(P, {
 })
 
 -- ---------- жизненный цикл ----------
+-- Диагностика 0.0.2: в логе 0.0.1 хелперы стартовали без лобби (и у лабы с первых секунд),
+-- значит P.role() вне лобби не пустая строка. Пишем в лог всё, что видим о сессии, чтобы
+-- выбрать правильный признак лобби по фактам, а не по догадке.
+local function session_info(event, role)
+	local okr, roster = pcall(P.roster)
+	local n = okr and type(roster) == "table" and tostring(#roster) or ("n/a " .. util.first_line(roster))
+	log("session event=" .. event .. " role=" .. string.format("%q", tostring(role)) .. " type=" .. type(role) .. " roster=" .. n)
+end
+
 P.on_tick(function() agent:tick() end)
 do
-	local ok, err = pcall(P.on_role_change, function(role) agent:session(role) end)
+	local ok, err = pcall(P.on_role_change, function(role)
+		session_info("role_change", role)
+		agent:session(role)
+	end)
 	if not ok then log("on_role_change failed: " .. util.first_line(err)) end
-	ok, err = pcall(P.on_session_end, function() agent:session("") end)
+	ok, err = pcall(P.on_session_end, function()
+		session_info("session_end", nil)
+		agent:session("")
+	end)
 	if not ok then log("on_session_end failed: " .. util.first_line(err)) end
 end
 do
 	local ok, role = pcall(P.role)
+	session_info("load", ok and role or ("error " .. util.first_line(role)))
 	agent:session(ok and role or "")
 end
 render()

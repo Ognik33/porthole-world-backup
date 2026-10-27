@@ -1,7 +1,6 @@
 -- Поддельный porthole для Luau-тестов. Записывает всё, что дополнение делает, в H.*
 -- Поведение взято из описи API лабы (Porthole 3.0.2); то, что лаба не проверила, настраивается:
---   H.open_mode = "plain"   объект tcp_open с функциями send(text) / close()
---               | "method"  методы send(self, text) / close(self)
+--   H.open_mode = "plain"   объект tcp_open с функциями send(text) / close() (так в Porthole 3.0.2)
 --               | "throws"  сам tcp_open бросает ошибку
 --               | "send_fails" объект есть, но send бросает ошибку
 --   porthole.tcp_open = nil  функции нет вовсе
@@ -42,6 +41,7 @@ porthole = {
 	log = function(s) table.insert(H.logs, s) end,
 	notify = function(level, s) table.insert(H.notes, level .. ": " .. s) end,
 	role = function() return role end,
+	roster = function() return role == "" and {} or { { steam_id = "1", name = "me", is_host = true, is_you = true } } end,
 	free_port = function() return 41000 + #H.helpers end,
 	random_token = function(n) return string.rep("a", n or 16) .. tostring(#H.helpers) end,
 	on_role_change = function(f) H.role_cb = f end,
@@ -58,24 +58,12 @@ porthole = {
 		local mode = H.open_mode
 		if mode == "throws" then error("tcp_open: connection refused") end
 		local h = {}
-		if mode == "method" then
-			h.send = function(self, text)
-				assert(self == h, "error converting Lua string to userdata")
-				assert(type(text) == "string", "error converting Lua nil to String")
-				table.insert(H.open_sent, text)
-			end
-			h.close = function(self)
-				assert(self == h, "error converting Lua nil to userdata")
-				H.open_closed += 1
-			end
-		else
-			h.send = function(text)
-				assert(type(text) == "string", "error converting Lua table to String")
-				if H.open_mode == "send_fails" then error("connection reset") end
-				table.insert(H.open_sent, text)
-			end
-			h.close = function() H.open_closed += 1 end
+		h.send = function(text)
+			assert(type(text) == "string", "error converting Lua table to String")
+			if H.open_mode == "send_fails" then error("connection reset") end
+			table.insert(H.open_sent, text)
 		end
+		h.close = function() H.open_closed += 1 end
 		return h
 	end,
 	run_helper = function(spec)
