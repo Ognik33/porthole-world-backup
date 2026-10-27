@@ -12,6 +12,8 @@
 //                            сиротой (в логе 0.0.3 после выхода из лобби дополнение не получило ни
 //                            одного события, и неизвестно, убил ли Porthole хелпер).
 //   --hello                  одна строка hello и выход (диагностика)
+//   --resolve <port>|all     определить мир по порту (или по всем портам java/javaw) и выйти
+//   --resolve-pid <pid>      то же по PID процесса игры (диагностика)
 //
 // Протокол агента (версия 1) описан в docs/protocol.md. Коротко:
 //   команда:  <token> TAB <команда> [TAB аргумент]... LF
@@ -43,9 +45,21 @@ void out_line(const char *s) {
         size_t n = strlen(s);
 #ifdef _WIN32
         HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-        DWORD w;
-        if (!h || h == INVALID_HANDLE_VALUE || !WriteFile(h, s, (DWORD)n, &w, NULL) || !WriteFile(h, "\n", 1, &w, NULL))
+        DWORD w, mode;
+        if (h && h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode)) {
+            // CLI в окне консоли: консоль не понимает UTF-8 без chcp 65001, поэтому пишем UTF-16.
+            // Porthole читает через канал (pipe), туда по-прежнему идут байты UTF-8.
+            int wn = MultiByteToWideChar(CP_UTF8, 0, s, (int)n, NULL, 0);
+            wchar_t *ws = wn > 0 ? malloc(sizeof(wchar_t) * (size_t)(wn + 1)) : NULL;
+            if (ws) {
+                MultiByteToWideChar(CP_UTF8, 0, s, (int)n, ws, wn);
+                ws[wn] = L'\n';
+                WriteConsoleW(h, ws, (DWORD)(wn + 1), &w, NULL);
+                free(ws);
+            }
+        } else if (!h || h == INVALID_HANDLE_VALUE || !WriteFile(h, s, (DWORD)n, &w, NULL) || !WriteFile(h, "\n", 1, &w, NULL)) {
             g_out_ok = 0;
+        }
 #else
         if (fwrite(s, 1, n, stdout) != n || fputc('\n', stdout) == EOF || fflush(stdout) != 0) g_out_ok = 0;
 #endif
@@ -93,7 +107,7 @@ void sb_field(sbuf *b, const char *key, const char *val) {
     sb_put(b, "\t");
     sb_put(b, key);
     sb_put(b, "=");
-    sb_put_clean(b, val ? val : "", 1024);
+    sb_put_clean(b, val ? val : "", RS_PATH); // пути длиннее не бывают: см. RS_PATH
 }
 
 void sb_field_int(sbuf *b, const char *key, long long v) {
@@ -122,7 +136,7 @@ static void emit_hello(void) {
     sb_field_int(&l, "proto", WB_PROTO);
     sb_field(&l, "version", WB_VERSION);
     // persist — агент понимает постоянные соединения (porthole.tcp_open)
-    sb_field(&l, "caps", "persist");
+    sb_field(&l, "caps", "persist,resolve");
     sb_emit(&l);
 }
 
@@ -186,7 +200,8 @@ static int handle_command(char *line) {
     const char *cmd = parts[1];
     if (!strcmp(cmd, "ping")) out_line("pong");
     else if (!strcmp(cmd, "quit")) g_quit = 1;
-    // шаг 2: resolve (resolve.c); шаг 3: backup, list, prune, space, pickfolder, open (backup.c)
+    else if (!strcmp(cmd, "resolve")) cmd_resolve(n > 2 ? parts[2] : NULL);
+    // шаг 3: watch, backup, list, prune, space, pickfolder, open (backup.c)
     else emit_error("bad_command", cmd);
     return 1;
 }
@@ -354,6 +369,13 @@ int porthole_native_main(int argc, char **argv) {
         return mode_agent(i + 1 < argc ? argv[i + 1] : NULL, i + 2 < argc ? argv[i + 2] : NULL,
                           i + 3 < argc ? argv[i + 3] : NULL);
     if (i < argc && !strcmp(argv[i], "--hello")) { emit_hello(); return 0; }
+    if (i < argc && !strcmp(argv[i], "--resolve")) {
+        const char *p = i + 1 < argc ? argv[i + 1] : NULL;
+        if (p && !strcmp(p, "all")) cmd_resolve_all();
+        else cmd_resolve(p);
+        return 0;
+    }
+    if (i < argc && !strcmp(argv[i], "--resolve-pid")) { cmd_resolve_pid(i + 1 < argc ? argv[i + 1] : NULL); return 0; }
     emit_error("bad_args", NULL);
     return 2;
 }

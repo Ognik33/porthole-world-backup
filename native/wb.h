@@ -92,9 +92,41 @@ void sb_put(sbuf *b, const char *s);
 void sb_free(sbuf *b);
 const char *sb_str(const sbuf *b);
 void sb_put_clean(sbuf *b, const char *s, size_t max_bytes); // TAB/CR/LF -> пробел, только валидный UTF-8
-void sb_field(sbuf *b, const char *key, const char *val);    // "\tkey=val" с очисткой, до 1024 байт
+void sb_field(sbuf *b, const char *key, const char *val);    // "\tkey=val" с очисткой, до 4096 байт
 void sb_field_int(sbuf *b, const char *key, long long v);
 void sb_emit(sbuf *b);                                 // вывести и освободить
 void emit_error(const char *reason, const char *detail);
+
+// ---------- определение мира (resolve.c) ----------
+void cmd_resolve(const char *port_s);   // ответ: candidate..., world | resolve_error
+void cmd_resolve_all(void);             // CLI: resolve для всех портов процессов java/javaw
+void cmd_resolve_pid(const char *pid_s); // CLI: resolve по PID процесса игры (port=0 в ответе)
+
+// Переносимая логика, отдельно от вызовов Windows: её проверяет tests/resolve_test.c на Linux.
+#define RS_PATH 4096 // байт UTF-8 на путь
+
+typedef struct {
+    const char *gamedir;   // значение --gameDir (или TargetDirectory), указатель внутрь argv; NULL — нет
+    const char *source;    // "gameDir" | "targetdir" | NULL
+    const char *launcher;  // "multimc" | "prism" | "vanilla" | "unknown"
+} rs_args;
+
+typedef struct {
+    char name[256];        // имя папки мира (UTF-8)
+    int locked;            // 1 — session.lock занят игрой, 0 — свободен, -1 — не удалось проверить
+    long long lock_mtime;  // время изменения session.lock, секунды Unix; -1 — неизвестно
+} rs_world;
+
+enum { RS_NONE = 0, RS_LOCK, RS_MTIME, RS_ASK };
+
+int rs_is_abs(const char *p);
+int rs_path_norm(const char *in, char *out, size_t n);
+void rs_parse_args(int argc, char **argv, rs_args *a);
+// папка игры: --gameDir (абсолютный или от рабочей папки), иначе рабочая папка.
+// *how = "gameDir" | "gameDir+cwd" | "targetdir" | "targetdir+cwd" | "cwd". 0 — не определить.
+int rs_game_dir(const rs_args *a, const char *cwd, char *out, size_t n, const char **how);
+// выбрать открытый мир. Возвращает RS_LOCK/RS_MTIME (мир в *picked) или RS_ASK (кандидаты в cand,
+// их число в *ncand, новые первыми). start — время запуска процесса игры (Unix), 0 — неизвестно.
+int rs_pick(const rs_world *w, int n, long long start, int *picked, int *cand, int max_cand, int *ncand);
 
 #endif

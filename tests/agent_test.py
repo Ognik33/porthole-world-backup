@@ -84,7 +84,7 @@ def check(name, cond):
 
 hello = expect("hello")
 check("hello proto", "\tproto=1\t" in hello + "\t")
-check("hello caps persist", "caps=persist" in hello)
+check("hello caps", "\tcaps=persist,resolve" in hello)
 check("ready port", expect("ready") == f"ready\tport={port}")
 
 # ---- tcp_send ----
@@ -92,6 +92,7 @@ one_shot("ping"); check("one-shot ping", expect("pong") == "pong")
 one_shot("ping", newline=False); check("one-shot without LF", expect("pong") == "pong")
 one_shot("ping", token="wrong" * 5); check("bad token", "reason=bad_token" in expect("error"))
 one_shot("nope"); check("bad command", "reason=bad_command" in expect("error"))
+one_shot("resolve", "25565"); check("resolve unsupported off Windows", "reason=unsupported" in expect("error"))
 
 # ---- tcp_open: команды с паузой дольше 2 с (на этом агент лабы закрывал соединение) ----
 c = persistent()

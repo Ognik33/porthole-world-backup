@@ -50,7 +50,7 @@
 |---|---|---|
 | `ping` | `pong` | 0.0.1 |
 | `quit` | хелпер завершается | 0.0.1 |
-| `resolve <port>` | `world pid= gamedir= saves= world= method=lock\|mtime\|ask candidates=` | план, шаг 2 |
+| `resolve <port>` | см. ниже | 0.0.5 |
 | `backup <seq> <путь мира> <clean\|hot>` | `progress seq= pct=` ... `backup_done seq= file= bytes= ms=` или `backup_error seq= reason=` | план, шаг 3 |
 | `list <папка копий> <мир>` | `copy file= bytes= kind= date=` ... `list_done` | план, шаг 3 |
 | `prune <папка копий> <мир> <N> <M>` | `pruned count=` | план, шаг 3 |
@@ -59,6 +59,28 @@
 | `open <путь>` | открывает папку в Проводнике | план, шаг 3 |
 
 Неизвестная команда: `error reason=bad_command detail=<команда>`.
+
+### resolve
+
+Какой мир открыт на порту. Ответ приходит сразу (миллисекунды), строки помечены портом.
+
+```
+candidate port= world=<путь> name=<папка> locked=1|0|? lock_age_s=     только при method=ask, новые первыми, до 20
+world port= pid= exe= launcher=vanilla|multimc|prism|unknown source= gamedir= saves=
+      method=lock|mtime|ask world=<путь или пусто> name= worlds=<миров в saves> candidates= [diag=]
+resolve_error port= reason=bad_port|no_listener|no_gamedir|no_saves [gamedir= source= launcher= diag=]
+```
+
+- `source`: откуда взята папка игры: `gameDir`, `gameDir+cwd` (относительный `--gameDir`),
+  `targetdir`, `targetdir+cwd` (старые лаунчеры), `cwd` (рабочая папка процесса, MultiMC и Prism).
+- `method`: `lock` (session.lock занят игрой), `mtime` (session.lock изменён после запуска игры),
+  `ask` (ни одного или несколько кандидатов: спросить человека).
+- Миром считается папка в `saves`, где есть `session.lock`.
+- `diag`: что не удалось прочитать, например `cwd:open` или `cmdline:query`; для разбора проблем.
+- Из командной строки игры наружу попадает только значение `--gameDir` и маркер лаунчера.
+
+CLI для проверки без Porthole: `world_backup_cli.exe --resolve <port>`, `--resolve all`
+(все порты процессов java/javaw) и `--resolve-pid <pid>`.
 
 ## Как Luau выбирает канал
 

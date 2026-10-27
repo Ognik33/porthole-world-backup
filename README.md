@@ -57,6 +57,7 @@ sudo apt install gcc-mingw-w64-x86-64 zip python3
 ./tools/test.sh          # texts, helper protocol, Luau unit tests and scenarios
 ./tools/build.sh         # -> dist/world-backup-<version>.paddon, dist/world_backup_cli.exe
 ./tools/check_repro.sh   # builds twice and compares hashes
+./tests/win/smoke.sh     # optional: world detection under Wine with a fake game
 ```
 
 The build is reproducible: the `.paddon` in Releases (built by GitHub Actions from this code) is

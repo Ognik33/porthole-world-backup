@@ -8,7 +8,7 @@ OUTDIR=build/world-backup
 rm -rf "$OUTDIR" && mkdir -p "$OUTDIR/native/windows-x86_64" dist
 mapfile -t SRC < <(ls native/*.c | LC_ALL=C sort)
 CFLAGS=(-O2 -s -static-libgcc -Wall -Wextra "-DWB_VERSION=\"$VERSION\"" -Wl,--no-insert-timestamp)
-LIBS=(-lws2_32)
+LIBS=(-lws2_32 -liphlpapi -lshell32)
 x86_64-w64-mingw32-gcc -shared "${CFLAGS[@]}" -o "$OUTDIR/native/windows-x86_64/world_backup.dll" "${SRC[@]}" "${LIBS[@]}"
 x86_64-w64-mingw32-gcc -DCLI_MAIN "${CFLAGS[@]}" -o dist/world_backup_cli.exe "${SRC[@]}" "${LIBS[@]}"
 python3 tools/bundle.py "$OUTDIR/main.luau"

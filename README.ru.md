@@ -57,6 +57,7 @@ sudo apt install gcc-mingw-w64-x86-64 zip python3
 ./tools/test.sh          # тексты, протокол хелпера, юнит-тесты и сценарии Luau
 ./tools/build.sh         # -> dist/world-backup-<версия>.paddon, dist/world_backup_cli.exe
 ./tools/check_repro.sh   # собирает два раза и сравнивает хеши
+./tests/win/smoke.sh     # необязательно: определение мира под Wine с поддельной игрой
 ```
 
 Сборка воспроизводимая: `.paddon` в Releases (его собирает GitHub Actions из этого кода) бит в бит
