@@ -1,0 +1,12 @@
+name = "world-backup"
+title = "World backup"
+summary = "Automatic backups of Minecraft Java worlds you host through Porthole."
+version = "0.0.1"
+author = "Ognik33"
+api_version = 1
+entry = "main.luau"
+capabilities = ["ui", "identity", "run_helper", "system"]
+natives = ["world_backup"]
+elevates = false
+lobby_role = "cosmetic"
+platforms = ["windows"]
