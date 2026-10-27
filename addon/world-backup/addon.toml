@@ -1,7 +1,7 @@
 name = "world-backup"
 title = "World backup"
 summary = "Automatic backups of Minecraft Java worlds you host through Porthole."
-version = "0.0.5"
+version = "0.0.6"
 author = "Ognik33"
 api_version = 1
 entry = "main.luau"

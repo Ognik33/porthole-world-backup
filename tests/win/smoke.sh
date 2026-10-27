@@ -11,7 +11,9 @@ command -v wine >/dev/null || { echo "wine not found, skipping"; exit 0; }
 export LANG=C.UTF-8 LC_ALL=C.UTF-8 WINEDEBUG=-all WINEPREFIX=${WINEPREFIX:-/tmp/wb-wine}
 mkdir -p build
 mapfile -t SRC < <(ls native/*.c | LC_ALL=C sort)
-x86_64-w64-mingw32-gcc -DCLI_MAIN -O2 -o build/smoke_cli.exe "${SRC[@]}" -lws2_32 -liphlpapi -lshell32
+MZDEFS=(-DMINIZ_NO_ARCHIVE_APIS -DMINIZ_NO_STDIO -DMINIZ_NO_TIME -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES)
+x86_64-w64-mingw32-gcc -c -O2 -w "${MZDEFS[@]}" -o build/miniz_win.o native/third_party/miniz/miniz.c
+x86_64-w64-mingw32-gcc -DCLI_MAIN -O2 "${MZDEFS[@]}" -o build/smoke_cli.exe "${SRC[@]}" build/miniz_win.o -lws2_32 -liphlpapi -lshell32
 x86_64-w64-mingw32-gcc -O2 -o build/fake_game.exe tests/win/fake_game.c -lws2_32 -lshell32
 timeout 120 wineboot -i >/dev/null 2>&1
 timeout 60 wine cmd /c exit >/dev/null 2>&1 # первый запуск в новом префиксе медленный
@@ -52,6 +54,27 @@ check "no gameDir: working folder" '[[ "$OUT" == *"source=cwd"*"saves="*"мс\\s
 
 AFTER= run 51658 - --gameDir 'нет\такой'
 check "relative gameDir, no saves" '[[ "$OUT" == *"reason=no_saves"*"source=gameDir+cwd"* ]]'
+
+# ---------- копии: пути Windows, кириллица, длинные пути, время архива, переименование ----------
+rm -rf "$WINEPREFIX/drive_c/Копии миров"
+mkdir -p "$G/saves/Наш мир/region" && head -c 2000000 /dev/urandom > "$G/saves/Наш мир/region/r.0.0.mca"
+echo data > "$G/saves/Наш мир/level.dat"
+sleep 1.1 # «мир не менялся» сравнивается строго по секундам
+cli() { timeout 120 wine build/smoke_cli.exe --cmd "$@" | tr -d '\r'; }
+OUT=$(cli backup 1 "$W\\saves\\Наш мир" 'C:\Копии миров' clean 0)
+check "backup on Windows paths" '[[ "$OUT" == *backup_done*"file=C:\\Копии миров\\Наш мир\\"*"_clean.zip"* ]]'
+Z=$(ls "$WINEPREFIX/drive_c/Копии миров/Наш мир/"*.zip 2>/dev/null | head -1)
+check "archive readable by Python zipfile" 'python3 -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; assert \"Наш мир/region/r.0.0.mca\" in z.namelist(); assert not any(n.endswith(\"session.lock\") for n in z.namelist())" "$Z"'
+OUT=$(cli list 2 'C:\Копии миров' "$W\\saves\\Наш мир")
+check "list on Windows" '[[ "$OUT" == *"kind=clean"*"list_done"*"count=1"* ]]'
+OUT=$(cli backup 3 "$W\\saves\\Наш мир" 'C:\Копии миров' clean 1)
+check "unchanged skipped (archive time set via SetFileTime)" '[[ "$OUT" == *"backup_skip"*"unchanged"* ]]'
+OUT=$(cli space 4 'C:\Копии миров\нет такой')
+check "space on Windows" '[[ "$OUT" == space*"free="* ]]'
+OUT=$(cli paths)
+check "paths: Documents" '[[ "$OUT" == *"backups="*"Porthole Backups"* ]]'
+OUT=$(cli prune 5 'C:\Копии миров' "$W\\saves\\Наш мир" 1 0)
+check "prune on Windows" '[[ "$OUT" == *"pruned"*"count=0"* ]]'
 
 echo "OK $pass checks, $fail failed"
 [ "$fail" = 0 ]

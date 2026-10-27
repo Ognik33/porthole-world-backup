@@ -102,6 +102,11 @@ void cmd_resolve(const char *port_s);   // ответ: candidate..., world | res
 void cmd_resolve_all(void);             // CLI: resolve для всех портов процессов java/javaw
 void cmd_resolve_pid(const char *pid_s); // CLI: resolve по PID процесса игры (port=0 в ответе)
 
+// ---------- копии (backup.c) ----------
+int backup_command(const char *cmd, int n, char **args); // 1 — команда обработана
+int backup_busy(void);                                   // идёт копия: сторожевой таймер ждёт
+void backup_shutdown(void);                              // остановить копию перед выходом
+
 // Переносимая логика, отдельно от вызовов Windows: её проверяет tests/resolve_test.c на Linux.
 #define RS_PATH 4096 // байт UTF-8 на путь
 

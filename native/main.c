@@ -14,6 +14,7 @@
 //   --hello                  одна строка hello и выход (диагностика)
 //   --resolve <port>|all     определить мир по порту (или по всем портам java/javaw) и выйти
 //   --resolve-pid <pid>      то же по PID процесса игры (диагностика)
+//   --cmd <команда> [арг]... любая команда агента без токена; ждёт конца копии (проверка и тесты)
 //
 // Протокол агента (версия 1) описан в docs/protocol.md. Коротко:
 //   команда:  <token> TAB <команда> [TAB аргумент]... LF
@@ -136,7 +137,7 @@ static void emit_hello(void) {
     sb_field_int(&l, "proto", WB_PROTO);
     sb_field(&l, "version", WB_VERSION);
     // persist — агент понимает постоянные соединения (porthole.tcp_open)
-    sb_field(&l, "caps", "persist,resolve");
+    sb_field(&l, "caps", "persist,resolve,backup");
     sb_emit(&l);
 }
 
@@ -201,7 +202,8 @@ static int handle_command(char *line) {
     if (!strcmp(cmd, "ping")) out_line("pong");
     else if (!strcmp(cmd, "quit")) g_quit = 1;
     else if (!strcmp(cmd, "resolve")) cmd_resolve(n > 2 ? parts[2] : NULL);
-    // шаг 3: watch, backup, list, prune, space, pickfolder, open (backup.c)
+    else if (backup_command(cmd, n - 2, parts + 2)) {}
+    // шаг 3, второй заход: watch, unwatch, pickfolder, open
     else emit_error("bad_command", cmd);
     return 1;
 }
@@ -333,6 +335,7 @@ static int mode_agent(const char *port_s, const char *token, const char *idle_s)
         }
         struct timeval tv = { 1, 0 };
         int r = select((int)maxfd + 1, &rd, NULL, NULL, &tv);
+        if (backup_busy()) g_last_cmd = now_ms(); // пока идёт копия, тишина не повод выходить
         if (now_ms() - g_last_cmd >= (unsigned long long)idle * 1000ull) {
             emit_error("idle_timeout", NULL);
             break;
@@ -351,6 +354,7 @@ static int mode_agent(const char *port_s, const char *token, const char *idle_s)
     }
     for (int i = 0; i < MAX_CONN; i++) conn_close(&g_conn[i]);
     CLOSESOCK(ls);
+    backup_shutdown();
     return 0;
 }
 
@@ -375,11 +379,43 @@ int porthole_native_main(int argc, char **argv) {
         else cmd_resolve(p);
         return 0;
     }
+    if (i < argc && !strcmp(argv[i], "--cmd") && i + 1 < argc) {
+        const char *cmd = argv[i + 1];
+        if (!strcmp(cmd, "resolve")) cmd_resolve(i + 2 < argc ? argv[i + 2] : NULL);
+        else if (!backup_command(cmd, argc - i - 2, argv + i + 2)) emit_error("bad_command", cmd);
+        while (backup_busy()) {
+#ifdef _WIN32
+            Sleep(50);
+#else
+            usleep(50000);
+#endif
+        }
+        return 0;
+    }
     if (i < argc && !strcmp(argv[i], "--resolve-pid")) { cmd_resolve_pid(i + 1 < argc ? argv[i + 1] : NULL); return 0; }
     emit_error("bad_args", NULL);
     return 2;
 }
 
 #if defined(TEST_MAIN) || defined(CLI_MAIN)
+#ifdef _WIN32
+#include <shellapi.h>
+// argv у main на Windows в кодировке ANSI (кириллица теряется): берём командную строку в UTF-16
+// и переводим в UTF-8, как её получает porthole_native_main от Porthole.
+int main(void) {
+    int n = 0;
+    LPWSTR *w = CommandLineToArgvW(GetCommandLineW(), &n);
+    if (!w) return 1;
+    char **u = calloc((size_t)n + 1, sizeof(char *));
+    for (int i = 0; u && i < n; i++) {
+        int need = WideCharToMultiByte(CP_UTF8, 0, w[i], -1, NULL, 0, NULL, NULL);
+        u[i] = malloc(need > 0 ? (size_t)need : 1);
+        if (u[i]) WideCharToMultiByte(CP_UTF8, 0, w[i], -1, u[i], need, NULL, NULL);
+    }
+    LocalFree(w);
+    return u ? porthole_native_main(n - 1, u + 1) : 1;
+}
+#else
 int main(int argc, char **argv) { return porthole_native_main(argc - 1, argv + 1); }
+#endif
 #endif

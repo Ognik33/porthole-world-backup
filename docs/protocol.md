@@ -51,12 +51,14 @@
 | `ping` | `pong` | 0.0.1 |
 | `quit` | хелпер завершается | 0.0.1 |
 | `resolve <port>` | см. ниже | 0.0.5 |
-| `backup <seq> <путь мира> <clean\|hot>` | `progress seq= pct=` ... `backup_done seq= file= bytes= ms=` или `backup_error seq= reason=` | план, шаг 3 |
-| `list <папка копий> <мир>` | `copy file= bytes= kind= date=` ... `list_done` | план, шаг 3 |
-| `prune <папка копий> <мир> <N> <M>` | `pruned count=` | план, шаг 3 |
-| `space <папка>` | `space free=` | план, шаг 3 |
+| `backup <seq> <мир> <папка копий> <clean\|hot> <0\|1>` | см. ниже | 0.0.6 |
+| `list <seq> <папка копий> <мир>` | `copy seq= file= kind= bytes= time= local=` ... `list_done seq= count= folder=` | 0.0.6 |
+| `prune <seq> <папка копий> <мир> <N> <M> [лимит МБ]` | `removed seq= file=` ... `pruned seq= count= freed=` | 0.0.6 |
+| `space <seq> <путь>` | `space seq= free= total=` или `space_error seq=` | 0.0.6 |
+| `paths` | `paths backups=<Документы>\Porthole Backups` | 0.0.6 |
 | `pickfolder` | `pickfolder path=` или `pickfolder cancel` | план, шаг 3 |
 | `open <путь>` | открывает папку в Проводнике | план, шаг 3 |
+| `watch` / `unwatch` | копия при закрытии мира силами хелпера | план, шаг 3 |
 
 Неизвестная команда: `error reason=bad_command detail=<команда>`.
 
@@ -79,7 +81,44 @@ resolve_error port= reason=bad_port|no_listener|no_gamedir|no_saves [gamedir= so
 - `diag`: что не удалось прочитать, например `cwd:open` или `cmdline:query`; для разбора проблем.
 - Из командной строки игры наружу попадает только значение `--gameDir` и маркер лаунчера.
 
-CLI для проверки без Porthole: `world_backup_cli.exe --resolve <port>`, `--resolve all`
+### backup
+
+Копия мира в отдельном потоке; агент в это время отвечает на другие команды. Одновременно идёт
+одна копия, вторая получает `backup_error reason=busy`. Последний аргумент: `1`: не копировать,
+если мир не менялся с последней копии (для `clean` сравнивается с чистыми, для `hot` с любыми),
+`0`: копировать всегда (кнопка «Сделать копию сейчас»).
+
+```
+backup_start seq= file=<итоговый путь> bytes=<размер мира> files=
+progress seq= pct= bytes=                       не чаще 4 раз в секунду
+backup_done seq= file= bytes=<размер архива> src_bytes= files= skipped= ms=
+backup_skip seq= reason=unchanged last=<имя последней копии>
+backup_error seq= reason=bad_args|busy|no_world|bad_root|walk|mkdir|marker|folder_conflict|no_space|memory|create|read|write|rename|cancelled [detail=]
+```
+
+- Папка копий мира: `<папка копий>\<имя папки мира>`, в ней скрытая метка `.world-backup` с путём мира.
+  Занята другим миром или чужая (без метки): `<имя> (<8 hex хеша пути>)`.
+- Архив: `<ГГГГ-ММ-ДД_ЧЧ-ММ-СС>_<clean|hot>[_<n>].zip` по местному времени начала копии. Время
+  изменения архива выставляется равным началу копии.
+- Пишется в `<архив>.tmp`, переименовывается целиком готовым. Брошенные `.tmp` с нашим шаблоном имени
+  удаляются в начале следующей копии этого мира. При выходе хелпера копия отменяется, `.tmp` удаляется.
+- `session.lock` в архив не попадает. Горячая копия пропускает файлы, которые не удалось открыть
+  (`skipped=`), чистая в этом случае завершается ошибкой `read`.
+- Место: нужно не меньше размера мира + 10 % + 256 МБ, иначе `no_space` до начала записи.
+- Сжатие: deflate уровня 3; файлы регионов (`.mca`, `.mcr`, `.mcc`) в режиме RLE, вдвое быстрее при
+  том же размере (чанки внутри уже сжаты игрой).
+- ZIP64 включается сам: файл от 0xF0000000 байт, архив больше 4 ГБ, больше 65 534 записей.
+
+### prune
+
+Удаляет только архивы с нашим шаблоном имени. Оставляет N последних чистых (минимум 1) и M горячих;
+с лимитом в МБ дополнительно удаляет самые старые из оставшихся, но никогда последнюю чистую.
+
+### CLI
+
+Для проверки без Porthole: любая команда агента без токена, `--cmd <команда> [аргументы]`
+(ждёт конца копии), например `world_backup_cli.exe --cmd backup 1 "C:\...\saves\Мир" "D:\Копии" clean 0`.
+Определение мира: `world_backup_cli.exe --resolve <port>`, `--resolve all`
 (все порты процессов java/javaw) и `--resolve-pid <pid>`.
 
 ## Как Luau выбирает канал
