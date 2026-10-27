@@ -62,31 +62,62 @@ agent = agentmod.new(P, {
 })
 
 -- ---------- жизненный цикл ----------
--- Диагностика 0.0.2: в логе 0.0.1 хелперы стартовали без лобби (и у лабы с первых секунд),
--- значит P.role() вне лобби не пустая строка. Пишем в лог всё, что видим о сессии, чтобы
--- выбрать правильный признак лобби по фактам, а не по догадке.
-local function session_info(event, role)
-	local okr, roster = pcall(P.roster)
-	local n = okr and type(roster) == "table" and tostring(#roster) or ("n/a " .. util.first_line(roster))
-	log("session event=" .. event .. " role=" .. string.format("%q", tostring(role)) .. " type=" .. type(role) .. " roster=" .. n)
+-- Признак лобби (лог 0.0.2, Porthole 3.0.2):
+--   при загрузке role() = "", сразу затем on_role_change("idle"): вне лобби роль "idle", а не "";
+--   при входе в лобби on_session_end и затем on_role_change("host") в один момент;
+--   после выхода из лобби за 1,4 с до закрытия Porthole ни одного события не пришло.
+-- Поэтому:
+--   * события (смена роли, конец сессии) применяются сразу, роль берётся из аргумента события;
+--   * на каждом тике роль ещё и опрашивается через role(); если опрос расходится с текущим
+--     решением дольше POLL_GRACE секунд, побеждает опрос. Это ловит пропущенные события, а
+--     задержка не даёт дёргать хелпер, когда role() на мгновение отстаёт от события (при загрузке
+--     role() вернул "", хотя событие уже сказало "idle").
+local NO_SESSION = { [""] = true, idle = true }
+local POLL_GRACE = 2
+
+local function in_session(role)
+	return type(role) == "string" and not NO_SESSION[role]
 end
 
-P.on_tick(function() agent:tick() end)
+local agent_role = nil     -- роль, для которой запущен хелпер; nil — хелпер не нужен
+local mismatch_since = nil -- с какого момента опрос role() расходится с agent_role
+
+local function apply(event, role)
+	log("session event=" .. event .. " role=" .. string.format("%q", tostring(role)))
+	mismatch_since = nil
+	local want = in_session(role) and role or nil
+	if want ~= agent_role then
+		agent_role = want
+		agent:session(want or "")
+	end
+end
+
+local function current_role()
+	local ok, r = pcall(P.role)
+	return ok and r or ""
+end
+
+local function poll()
+	local role = current_role()
+	local want = in_session(role) and role or nil
+	if want == agent_role then
+		mismatch_since = nil
+		return
+	end
+	local t = os.clock()
+	mismatch_since = mismatch_since or t
+	if t - mismatch_since >= POLL_GRACE then apply("poll", role) end
+end
+
+P.on_tick(function()
+	poll()
+	agent:tick()
+end)
 do
-	local ok, err = pcall(P.on_role_change, function(role)
-		session_info("role_change", role)
-		agent:session(role)
-	end)
+	local ok, err = pcall(P.on_role_change, function(role) apply("role_change", role) end)
 	if not ok then log("on_role_change failed: " .. util.first_line(err)) end
-	ok, err = pcall(P.on_session_end, function()
-		session_info("session_end", nil)
-		agent:session("")
-	end)
+	ok, err = pcall(P.on_session_end, function() apply("session_end", current_role()) end)
 	if not ok then log("on_session_end failed: " .. util.first_line(err)) end
 end
-do
-	local ok, role = pcall(P.role)
-	session_info("load", ok and role or ("error " .. util.first_line(role)))
-	agent:session(ok and role or "")
-end
+apply("load", current_role())
 render()

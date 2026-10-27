@@ -4,6 +4,11 @@ check("no helper outside session", #H.helpers == 0)
 check("tab: wait for lobby", tab_has("Хелпер запустится, когда ты зайдёшь в лобби"))
 check("dev note shown", tab_has("Тестовая сборка"))
 
+-- как в Porthole 3.0.2: вне лобби роль "idle"
+set_role("idle"); H.role_cb("idle")
+ticks(10)
+check("idle is not a session", #H.helpers == 0)
+
 set_role("host"); H.role_cb("host")
 check("helper started in session", #H.helpers == 1)
 local spec = helper().spec
@@ -21,8 +26,8 @@ agent_say("pong")
 check("tab: ready with channel", tab_has("Хелпер работает · канал tcp_open"))
 check("log: ready + channel", log_has("agent ready version=0.0.1 port=41000 channel=tcp_open"))
 check("log: start", log_has("agent start port=41000"))
-check("log: session at load", log_has('session event=load role="" type=string roster=0'))
-check("log: role change", log_has('session event=role_change role="host" type=string roster=1'))
+check("log: session at load", log_has('session event=load role=""'))
+check("log: role change", log_has('session event=role_change role="host"'))
 
 -- ping раз в ~10 с (20 тиков) по тому же соединению
 local n = #H.open_sent
@@ -52,10 +57,10 @@ bring_up(); agent_say("pong")
 
 -- выход из сессии: хелпер остановлен, соединение закрыто, перезапусков нет
 local closed = H.open_closed
-set_role(""); H.end_cb()
+set_role("idle"); H.end_cb()
 check("helper stopped at session end", helper().stopped)
 check("log: stop", log_has("agent stop port=41002"))
-check("log: session end", log_has("session event=session_end role=\"nil\""))
+check("log: session end", log_has('session event=session_end role="idle"'))
 check("conn closed at session end", H.open_closed == closed + 1)
 check("tab: wait again", tab_has("Хелпер запустится"))
 ticks(300); check("no restart outside session", #H.helpers == 3)

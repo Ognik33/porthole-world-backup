@@ -16,6 +16,12 @@ H = {
 local role = ""
 function set_role(r) role = r end
 
+-- Поддельные часы: дополнение считает сроки по os.clock(), а таблица os в Luau только для чтения,
+-- поэтому подменяем глобальную os целиком. Каждый тик сдвигает часы на 0,5 с, как в Porthole.
+NOW = 1000
+local real_os = os
+os = setmetatable({ clock = function() return NOW end }, { __index = real_os })
+
 local function fmt(s, vars)
 	return (string.gsub(s, "{(%w+)}", function(k) return tostring((vars or {})[k] or "{" .. k .. "}") end))
 end
@@ -41,7 +47,6 @@ porthole = {
 	log = function(s) table.insert(H.logs, s) end,
 	notify = function(level, s) table.insert(H.notes, level .. ": " .. s) end,
 	role = function() return role end,
-	roster = function() return role == "" and {} or { { steam_id = "1", name = "me", is_host = true, is_you = true } } end,
 	free_port = function() return 41000 + #H.helpers end,
 	random_token = function(n) return string.rep("a", n or 16) .. tostring(#H.helpers) end,
 	on_role_change = function(f) H.role_cb = f end,
@@ -92,7 +97,14 @@ porthole = {
 function helper() return H.helpers[#H.helpers] end
 function agent_say(line) helper().spec.on_output(line) end
 function helper_exit(code) helper().spec.on_exit(code or 1, "test") end
-function ticks(n) for _ = 1, n do H.tick_cb() end end
+function ticks(n)
+	for _ = 1, n do
+		NOW += 0.5
+		H.tick_cb()
+	end
+end
+-- сдвинуть часы без тиков (для юнит-тестов агента, которые зовут a:tick() сами)
+function advance(sec) NOW += sec end
 
 -- имя команды из строки "<token>\t<cmd>\t...\n"
 function cmd_of(text) return text and string.match(text, "^[^\t]+\t([^\t\n]+)") end

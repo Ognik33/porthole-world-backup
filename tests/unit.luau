@@ -113,10 +113,19 @@ do -- bind: порт заняли, это не считается неудаче
 	a:session("host")
 	agent_say("error\treason=bind")
 	helper_exit(3)
-	check("bind not counted", a.fails == 0 and a.restart_in == 1)
+	check("bind not counted", a.fails == 0 and a.restart_at ~= nil and a.restart_at <= os.clock())
 	local n = #H.helpers
 	a:tick()
 	check("bind: new helper at once", #H.helpers == n + 1 and a.state == "starting")
+	a:stop()
+end
+do -- пачка тиков без хода времени (так Porthole вызывает on_tick при загрузке) не сбрасывает хелпер
+	local a = fresh()
+	a:session("host")
+	for _ = 1, 50 do a:tick() end
+	check("tick burst does not drop starting helper", a.state == "starting" and not helper().stopped)
+	advance(9.9); a:tick(); check("still starting at 9.9 s", a.state == "starting")
+	advance(0.1); a:tick(); check("dropped at 10 s without ready", a.state == "restarting" and helper().stopped)
 	a:stop()
 end
 done()

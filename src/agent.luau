@@ -16,11 +16,16 @@ local agent = {}
 agent.__index = agent
 
 local PROTO = 1
-local BACKOFF = { 10, 20, 40, 120 } -- тики (~0,5 с): 5 с, 10 с, 20 с, 60 с
-local STABLE_TICKS = 120            -- после минуты нормальной работы счётчик неудач сбрасывается
-local PING_EVERY = 20               -- ~10 с
-local PONG_WAIT = 10                -- ~5 с
-local READY_WAIT = 20               -- ~10 с от запуска процесса до строки ready
+-- Все сроки в секундах по os.clock(), а не в тиках: в логе 0.0.2 Porthole при загрузке дополнения
+-- вызвал on_tick 20 раз за 27 мс, и счёт по тикам сбросил только что запущенный хелпер.
+-- os.clock() в Luau — монотонный счётчик секунд (не время суток), для сроков он и нужен.
+local BACKOFF = { 5, 10, 20, 60 }   -- пауза перед перезапуском после 1-й, 2-й, 3-й, 4-й+ неудачи
+local STABLE = 60                   -- после минуты нормальной работы счётчик неудач сбрасывается
+local PING_EVERY = 10
+local PONG_WAIT = 5
+local READY_WAIT = 10               -- от запуска процесса до строки ready
+
+local function now() return os.clock() end
 
 -- Состояния (agent.state):
 --   off        вне сессии, хелпер не нужен
@@ -55,9 +60,9 @@ function agent.new(P, opts)
 	self.fatal_reason = nil
 	self.wanted = false
 	self.fails = 0
-	self.restart_in = 0
-	self.ticks = 0
-	self.alive_ticks = 0
+	self.restart_at = nil    -- когда перезапустить хелпер (os.clock)
+	self.ready_at = nil      -- когда хелпер стал готов
+	self.started_at = nil
 	self.ping_at = nil
 	self.last_pong = nil
 	return self
@@ -125,7 +130,7 @@ local function line_of(token, ...)
 end
 
 function agent:_ping()
-	self.ping_at = self.ticks
+	self.ping_at = now()
 	self:_write(line_of(self.token, "ping"))
 end
 
@@ -156,7 +161,7 @@ function agent:start()
 	self.token = make_token(P)
 	self.caps, self.version, self.channel = {}, nil, nil
 	self.bind_retry = false
-	self.ping_at, self.last_pong, self.alive_ticks = nil, nil, 0
+	self.ping_at, self.last_pong, self.ready_at = nil, nil, nil
 	local current
 	local ok, h = pcall(P.run_helper, {
 		native = self.opts.native,
@@ -177,7 +182,7 @@ function agent:start()
 	if not ok or not h then return self:_fatal(h or "run_helper") end
 	self.helper = h
 	current = h
-	self.started_at = self.ticks
+	self.started_at = now()
 	self:log("agent start port=" .. port)
 	self:_set("starting")
 end
@@ -187,10 +192,10 @@ function agent:_schedule_restart()
 		if self.bind_retry then
 			-- порт заняли между free_port и запуском: это не сбой хелпера, сразу новый порт
 			self.bind_retry = false
-			self.restart_in = 1
+			self.restart_at = now()
 		else
 			self.fails += 1
-			self.restart_in = BACKOFF[math.min(self.fails, #BACKOFF)]
+			self.restart_at = now() + BACKOFF[math.min(self.fails, #BACKOFF)]
 		end
 		self:_set("restarting")
 	elseif self.state ~= "fatal" then
@@ -211,7 +216,7 @@ end
 function agent:stop()
 	if self.helper then self:log("agent stop port=" .. tostring(self.port)) end
 	self.wanted = false
-	self.restart_in = 0
+	self.restart_at = nil
 	self:_kill()
 	if self.state ~= "fatal" then self:_set("off") end
 end
@@ -259,10 +264,11 @@ function agent:_on_line(line)
 	elseif kind == "ready" then
 		self:_link()
 	elseif kind == "pong" then
-		self.ping_at, self.last_pong = nil, self.ticks
+		self.ping_at, self.last_pong = nil, now()
 		if self.state == "linking" then
 			self:log("agent ready version=" .. tostring(self.version) .. " port=" .. tostring(self.port)
 				.. " channel=" .. tostring(self.channel))
+			self.ready_at = now()
 			self:_set("ready")
 		end
 	elseif kind == "error" and f.reason == "bind" then
@@ -276,24 +282,25 @@ function agent:_on_line(line)
 	end
 end
 
--- вызывать из on_tick (~0,5 с)
+-- вызывать из on_tick; сроки считаются по часам, так что частота тиков не важна
 function agent:tick()
-	self.ticks += 1
-	if self.restart_in > 0 then
-		self.restart_in -= 1
-		if self.restart_in == 0 and self.wanted and not self.helper then self:start() end
+	local t = now()
+	if self.restart_at then
+		if t >= self.restart_at then
+			self.restart_at = nil
+			if self.wanted and not self.helper then self:start() end
+		end
 		return
 	end
 	if not self.helper then return end
-	if self.state == "starting" and self.ticks - (self.started_at or 0) >= READY_WAIT then
+	if self.state == "starting" and t - (self.started_at or t) >= READY_WAIT then
 		self:_drop("no_ready")
 		return
 	end
-	if self.state == "ready" then
-		self.alive_ticks += 1
-		if self.alive_ticks == STABLE_TICKS then self.fails = 0 end
+	if self.state == "ready" and self.fails > 0 and self.ready_at and t - self.ready_at >= STABLE then
+		self.fails = 0
 	end
-	if self.ping_at and self.ticks - self.ping_at >= PONG_WAIT then
+	if self.ping_at and t - self.ping_at >= PONG_WAIT then
 		if self.state == "linking" and self.channel == "tcp_open" then
 			self:_open_failed("no pong")
 			self:_ping()
@@ -302,7 +309,7 @@ function agent:tick()
 		end
 		return
 	end
-	if self.state == "ready" and not self.ping_at and self.ticks - (self.last_pong or 0) >= PING_EVERY then
+	if self.state == "ready" and not self.ping_at and t - (self.last_pong or t) >= PING_EVERY then
 		self:_ping()
 	end
 end
